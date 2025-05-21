@@ -18,16 +18,28 @@ modules:
     parameters:
       instances: 1
       buildpack: nodejs_buildpack
+      routes:
+        - route: "${default-url}"
+        - route: "${default-host}.cert.${default-domain}"
     build-parameters:
       builder: npm-ci
     provides:
       - name: srv-api # required by consumers of CAP services (e.g. approuter)
         properties:
           srv-url: ${default-url}
+          srv-cert-url: '${protocol}://${default-host}.cert.${default-domain}'
     requires:
       - name: incident-management-destination
       - name: incident-management-db
       - name: incident-management-auth
+        parameters:
+          config:
+            credential-type: X509_GENERATED
+            app-identifier: srv
+    deployed-after:
+      - incident-management-ams-policies-deployer
+    properties:
+      AMS_DCL_ROOT: ams/dcl
 
   - name: incident-management-db-deployer
     type: hdb
@@ -67,10 +79,6 @@ modules:
   - name: incident-management-destinations
     type: com.sap.application.content
     requires:
-      - name: incident-management-auth
-        parameters:
-          service-key:
-            name: incident-management-auth-key
       - name: incident-management-html5-repo-host
         parameters:
           service-key:
@@ -90,11 +98,24 @@ modules:
               ServiceInstanceName: incident-management-html5-repo-host
               ServiceKeyName: incident-management-html5-repo-host-key
               sap.cloud.service: incidentmanagement.service
-            - Name: incident-management-auth
-              Authentication: OAuth2UserTokenExchange
-              ServiceInstanceName: incident-management-auth
-              ServiceKeyName: incident-management-auth-key
-              sap.cloud.service: incidentmanagement.service
+
+  - name: incident-management-ams-policies-deployer
+    type: javascript.nodejs
+    path: gen/policies
+    parameters:
+      buildpack: nodejs_buildpack
+      no-route: true
+      no-start: true
+      tasks:
+        - name: deploy-dcl
+          command: npm start
+          memory: 512M
+    requires:
+      - name: incident-management-auth
+        parameters:
+          config:
+            credential-type: X509_GENERATED
+            app-identifier: ams-policy-deployer
 
 resources:
   - name: incident-management-destination
@@ -109,6 +130,7 @@ resources:
             existing_destinations_policy: update
             destinations:
               - Name: incident-management-srv-api
+                HTML5.IASDependencyName: incidents-api
                 URL: ~{srv-api/srv-url}
                 Authentication: NoAuthentication
                 Type: HTTP
@@ -141,9 +163,9 @@ resources:
   - name: incident-management-auth
     type: org.cloudfoundry.managed-service
     parameters:
-      service: xsuaa
+      service: identity
       service-plan: application
-      path: ./xs-security.json
+      path: ./ias-config.json
       config:
         xsappname: incident-management-${org}-${space}
         tenant-mode: dedicated
